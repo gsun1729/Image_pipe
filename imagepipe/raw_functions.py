@@ -731,6 +731,430 @@ def locally_normalize(channel, local_xy_pool=5, local_z_pool=2):
     return np.array(new_slice_collector)
 
 
+# Start of function merge
+class Graph:
+	'''Class for creating graphs for 3d image segmentation'''
+	def __init__(self):
+		# default dictionary to store graph
+		self.graph = defaultdict(list)
+
+
+	def addEdge(self, origin, destination, bidirectional = False, self_connect = True):
+		'''Function to add an edge to graph, can be set to bidirectional if desired
+		Manual entry of each element
+
+		:param origin: [int] start node ID
+		:param destination: [int] end node ID
+		:param bidirectional: [bool] bool indicating whether the connection is bidirectional
+		:param self_connect: [bool] indicate whether the origin node connects to itself.
+		'''
+		# Append edge to dictionary of for point
+		self.graph[origin].append(destination)
+		# Append origin node edge to itself
+		if self_connect:
+			self.graph[origin].append(origin)
+		# Append node edge to itself
+		self.graph[destination].append(destination)
+		# Append reverse direction if bidirectional
+		if bidirectional:
+			self.graph[destination].append(origin)
+		# Remove duplicates
+		self.graph[origin] = list(set(self.graph[origin]))
+		self.graph[destination] = list(set(self.graph[destination]))
+
+
+	def rmEdge(self, origin, destination):
+		'''Function tries to delete an edge in a graph, conditional on if it exists
+
+		:param origin: [int] origin node number
+		:param destination: [int] Destination node number
+		'''
+
+		if self.path_exists(origin, destination):
+			origin_connections = len(self.graph[origin])
+			dest_connections = len(self.graph[destination])
+			self.graph[origin].remove(destination)
+			if origin == destination:
+				pass
+			else:
+
+				if origin_connections == 1 and dest_connections == 1:
+					pass
+				else:
+					self.graph[destination].remove(origin)
+		else:
+			raise Exception("Path from {} to {} does not exist".format(origin, destination))
+
+
+	def connections2graph(self, connection_table, connection_direction, *exist_list):
+		'''Function creates a bidirectional graph given a 2d table of connections between points
+
+		:param connection_table: [nd.array] numpy binary adjacency matrix
+		:param connection_direction: [np.ndarray] numpy matrix of m x n bools
+		:param exist_list: [list] list of whether elements within the axes of the adjacency matrix exist
+		'''
+		if not exist_list:
+			exist_list = np.ones(len(connection_table))
+		else:
+			exist_list = exist_list[0]
+
+		x_dim, y_dim = connection_table.shape
+		exists = np.outer(exist_list, exist_list.T)
+		connection_table = exists * connection_table
+		# print connection_table
+		for x in xrange(x_dim):
+			for y in xrange(y_dim):
+				if connection_table[x, y] == 1:
+					self.addEdge(x, y, bidirectional = connection_direction[x, y])
+				else:
+					pass
+
+
+	def BFS(self, s):
+		'''Function to print a BFS(Breadth First Traversal) of graph
+
+		:param s: [int] query node ID number
+		'''
+		connections = []
+		# If element is not even in graph, there is no way to start from it
+		if not s in self.graph:
+			return connections
+		# Mark all the vertices as not visited
+		visited = [False]*(len(self.graph))
+		dict_visted = dict(zip(self.graph.keys(), visited))
+		# print dict_visted
+		# Create a queue for BFS
+		queue = []
+
+		# Mark the source node as visited and enqueue it
+		queue.append(s)
+		dict_visted[s] = True
+		# # print queue
+		while queue:
+		# 	# Dequeue a vertex from queue and print it
+			s = queue.pop(0)
+			# print s,
+			connections.append(s)
+			# Get all adjacent vertices of the dequeued
+			# vertex s. If a adjacent has not been visited,
+			# then mark it visited and enqueue it
+			for i in self.graph[s]:
+				if dict_visted[i] == False:
+					queue.append(i)
+					dict_visted[i] = True
+		return connections
+
+
+	def path_exists(self, start, end):
+		'''Given a start point and an end point, determine whether if the two points are connected by any path.
+
+		:param start: [int] node ID for starting node
+		:param end: [int] node ID for ending node
+		'''
+		if not start in self.graph or not end in self.graph:
+			return False
+		else:
+			if start == end:
+				return True
+			else:
+				connections = self.BFS(start)
+				if any(v == end for v in connections):
+					return True
+				else:
+					return False
+
+
+	def get_self(self):
+		'''Statement used for getting graph contents for printing and debugging
+		'''
+		return self.graph
+
+
+
+def get_3d_neighbor_coords(tuple_location, size):
+	'''Gets neighbors directly adjacent to target voxel. 1U distance max. Does not include diagonally adjacent neighbors
+
+	:param tuple_location: [tuple] query location
+	:param size: [tuple] size dimensions of the original image listed in order of Z, X, Y, to get rid of any points that exceed the boundaries of the rectangular prism space
+	:return: [list] of [tuple] list of tuples indicating neighbor locations
+	'''
+	neighbors = []
+	z, x, y = tuple_location
+	zdim, xdim, ydim = size
+
+	top = (z + 1, x, y)
+	bottom = (z - 1, x, y)
+	front = (z, x + 1, y)
+	back = (z, x - 1, y)
+	left = (z, x, y - 1)
+	right = (z, x, y + 1)
+
+	neighbors = [top, bottom, front, back, left, right]
+	neighbors = [pt for pt in neighbors if (pt[0] >= 0 and pt[1] >= 0 and pt[2] >= 0) and (pt[0] < zdim and pt[1] < xdim and pt[2] < ydim)]
+
+	return neighbors
+
+
+def get_3d_neighbor_coords_3U(tuple_location, size):
+	'''Gets neighbors all around target voxel. sqrt(3)U distance max. Includes diagonally adjacent neighbors
+
+	:param tuple_location: [tuple] query location
+	:param size: [tuple] size dimensions of the original image listed in order of Z, X, Y, to get rid of any points that exceed the boundaries of the rectangular prism space
+	:return: [list] of [tuple] list of tuples indicating neighbor locations
+	'''
+	neighbors = []
+	z, x, y = tuple_location
+	zdim, xdim, ydim = size
+
+	top = (z + 1, x, y)
+	bottom = (z - 1, x, y)
+	front = (z, x + 1, y)
+	back = (z, x - 1, y)
+	left = (z, x, y - 1)
+	right = (z, x, y + 1)
+
+	corner1 = (z - 1, x - 1, y - 1)
+	corner2 = (z - 1, x + 1, y - 1)
+	corner3 = (z - 1, x + 1, y + 1)
+	corner4 = (z - 1, x - 1, y + 1)
+	corner5 = (z + 1, x - 1, y - 1)
+	corner6 = (z + 1, x + 1, y - 1)
+	corner7 = (z + 1, x + 1, y + 1)
+	corner8 = (z + 1, x - 1, y + 1)
+
+	edge1 = (z - 1, x, y - 1)
+	edge2 = (z - 1, x + 1, y)
+	edge3 = (z - 1, x, y + 1)
+	edge4 = (z - 1, x - 1, y)
+	edge5 = (z, x - 1, y - 1)
+	edge6 = (z, x + 1, y - 1)
+	edge7 = (z, x + 1, y + 1)
+	edge8 = (z, x - 1, y + 1)
+	edge9 = (z + 1, x, y -1)
+	edge10 = (z + 1, x + 1, y)
+	edge11 = (z + 1, x, y + 1)
+	edge12 = (z + 1, x - 1, y)
+
+	neighbors = [top, bottom, front, back, left, right,
+					corner1, corner2, corner3, corner4, corner5, corner6, corner7, corner8,
+					edge1, edge2, edge3, edge4, edge5, edge6, edge7, edge8, edge9, edge10, edge11, edge12]
+
+	neighbors = [pt for pt in neighbors if (pt[0] >= 0 and pt[1] >= 0 and pt[2] >= 0) and (pt[0] < zdim and pt[1] < xdim and pt[2] < ydim)]
+
+	return neighbors
+
+
+def imglattice2graph(input_binary):
+	'''Converts a 3d image into a graph for segmentation
+
+	:param input_binary: [np.ndarray] complete binary image 3d
+	:return item_id: [np.ndarray] indicies of all elements in the lattice for identification
+	:return graph_map: [graph object] graph object indicating which voxels are connected to which voxels
+	'''
+	zdim, xdim, ydim = input_binary.shape
+	# Instantiate graph
+	graph_map = Graph()
+	# Create an array of IDs
+	item_id = np.array(range(0, zdim * xdim * ydim)).reshape(zdim, xdim, ydim)
+	# Traverse input binary image
+	# print "\tSlices Analyzed: ",
+	for label in set(input_binary.flatten()):
+		if label != 0:
+			label_locations = [tuple(point) for point in np.argwhere(input_binary == label)]
+			for location in label_locations:
+				# Get Query ID Node #
+				query_ID = item_id[location]
+				# Get neighbors to Query
+				neighbor_locations = get_3d_neighbor_coords(location, input_binary.shape)
+				# For each neighbor
+				for neighbor in neighbor_locations:
+					# Get Neighbor ID
+					neighbor_ID = item_id[neighbor]
+					# If query exists and neighbor exists, branch query and neighbor.
+					# If only Query exists, branch query to itself.
+					if input_binary[neighbor]:
+						graph_map.addEdge(origin = query_ID,
+											destination = neighbor_ID,
+											bidirectional = False,
+											self_connect = True)
+					else:
+						graph_map.addEdge(origin = query_ID,
+											destination = query_ID,
+											bidirectional = False,
+											self_connect = True)
+		else:
+			pass
+	return item_id, graph_map
+
+
+def layer_comparator(image3D):
+	'''Uses lattice graph data to determine where the unique elements are and prune redundancies.
+
+	:param image3D: [np.ndarray] original binary image 3d
+	:return: [np.ndarray] segmented 3d image
+	'''
+	print "> Generating lattice"
+	ID_map, graph = imglattice2graph(image3D)
+
+	graph_dict = graph.get_self()
+	# for key in sorted(graph_dict.iterkeys()):
+	# 	print "%s: %s" % (key, graph_dict[key])
+	network_element_list = []
+	print "> Network size: ", len(graph_dict)
+	# print graph_dict
+	print "> Pruning Redundancies"
+	for key in graph_dict.keys():
+		try:
+			network = sorted(graph.BFS(key))
+			for connected_key in network:
+				graph_dict.pop(connected_key, None)
+			if network not in network_element_list:
+				network_element_list.append(network)
+		except:
+			pass
+	print "> Unique Paths + Background [1]: ", len(network_element_list)
+
+	img_dimensions = ID_map.shape
+	output = np.zeros_like(ID_map).flatten()
+
+	last_used_label = 1
+	print "> Labeling Network"
+	for network in network_element_list:
+		for element in network:
+			output[element] = last_used_label
+		last_used_label += 1
+	return output.reshape(img_dimensions)
+
+
+def euclid_dist_nD(p0, p1):
+	'''Determines the euclidian distance between two n dimensional points
+
+	:param p0: [tuple] point 0 tuple form
+	:param p1: [tuple] point 1 tuple form
+	:return: [float] distance
+	'''
+	return np.sum((p1 - p0) ** 2) ** 0.5
+
+
+class Point_set(object):
+	'''Class creates a set of points and a set of associated attributes with the point set.
+	Intended to be used for triangles
+	Points must be passed to the class in order.
+	'''
+	def __init__(self, point_list):
+		self.point_list = np.array([[float(coordinate) for coordinate in point] for point in point_list])
+		self.num_pts = len(self.point_list)
+
+
+	def perimeter(self):
+		'''returns the perimeter of the point set (assumes order in which the points were passed)
+
+		:return: [float] perimeter value
+		'''
+		peri_distance = 0
+		for pt_indx in xrange(self.num_pts):
+			peri_distance += euclid_dist_nD(self.point_list[pt_indx],
+											self.point_list[pt_indx - 1])
+		return peri_distance
+
+
+	def side_lengths(self):
+		'''Determines the lengths of a each of the side lenths within the point set for the geometry they describe
+
+		:return: [list] of side lengths point to point in the order they are listed.
+		'''
+		side_len = []
+		for pt_indx in xrange(self.num_pts):
+			side_len.append(euclid_dist_nD(self.point_list[pt_indx],
+											self.point_list[pt_indx - 1]))
+		return np.array(side_len)
+
+
+	def heron_area(self):
+		'''Intended to be used to determine the area of a triangle described by the point set (3 pts)
+		DOES NOT WORK FOR ANY OTHER 2D GEOMETRIES
+
+		:return: [float] area of prescribed triangle
+		'''
+		semi_peri = self.perimeter() / 2
+		prod = semi_peri
+		for side in self.side_lengths():
+			prod *= semi_peri - side
+		return np.sqrt(prod)
+
+
+class Surface(object):
+	'''class that creates a surface given a set of faces and verticies associated with each face.
+	'''
+	def __init__(self, triangle_collection):
+		self.triangle_collection = triangle_collection
+		self.num_triangles = len(triangle_collection)
+		self.SA = self.get_SA()
+
+
+	def get_SA(self):
+		'''Determines the total surface area of the triangles in the collection of faces and verticies
+
+		:return: [float] area of all triangles in a surface
+		'''
+		total = 0
+		for triangle in self.triangle_collection:
+			triangle_set = Point_set(triangle)
+			total += triangle_set.heron_area()
+		return total
+
+
+	def get_stats(self):
+		'''Returns the number of triangles in the surface and the total surface area
+
+		:return: [int]
+		'''
+		return self.num_triangles, self.SA
+
+
+def get_attributes(masked_image, x = 1.0, y = 1.0, stack_height = 1.0):
+	'''Gets the attributes of a single binary element in 3d space.
+
+	:param masked_image: [np.ndarray] binary 3d image
+	:param x: [float] scaling factor for x (if calculation is desired in another unit than px)
+	:param y: [float] scaling factor for y (if calculation is desired in another unit than px)
+	:param stack_height: [float] scaling factor for z (if calculation is desired in another unit than px).
+							This is also the distance between slices in a stack image
+	:return volume, nTriangles, surfaceArea: [float], [int], [float] volume, number of triangles, and surface area of object
+	'''
+	masked_image[masked_image > 0] = 1
+	volume = np.sum(masked_image) * stack_height
+
+	masked_image = masked_image.astype(bool)
+	# print "> Computing surface..."
+
+	verts, faces, normals, values = measure.marching_cubes_lewiner(masked_image,
+																	level = None,
+																	spacing = (x, y, stack_height),
+																	gradient_direction = 'descent',
+																	step_size = 1,
+																	allow_degenerate = True,
+																	use_classic = False)
+	triangle_collection = verts[faces]
+	# print "> Computing attributes..."
+	triangle_Surface = Surface(triangle_collection)
+	nTriangles, surfaceArea = triangle_Surface.get_stats()
+	return volume, nTriangles, surfaceArea
+
+
+def reverse_cantor_pair(z):
+	'''Decoder for determining which two numbers make the number pairing.
+
+	:param z: [float] cantor number result
+	:return x, y: [int], [int] number pairing that resulted in the cantor number result
+	'''
+	# Used for determining which cell and mitochondria ID correspond to a labeled mitochondria
+	w = np.floor((np.sqrt((8 * z) + 1) - 1) / 2)
+	t = (w ** 2 + w) / 2
+	return int(w - z + t), int(z - t)
+
+
+
 dtype2bits = {'uint8': 8,
               'uint16': 16,
               'uint32': 32}
