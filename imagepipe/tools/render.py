@@ -4,9 +4,7 @@ import matplotlib.pyplot as plt
 from skimage.data import binary_blobs
 from matplotlib.gridspec import GridSpec
 import sys
-from properties import *
-'''Module includes functions for fast visualization of plots/image processing steps, 3d stack images for debugging
-'''
+
 
 def stack_viewer(image):
 	'''
@@ -212,6 +210,25 @@ def px_stats(image):
 	data = image.flatten()
 	return np.mean(data), np.std(data)
 
+
+def global_max(img_2d):
+	'''Returns the maximum pixel value within a 2-3d image'''
+	return np.amax(img_2d.flatten())
+
+
+def global_min(img_2d):
+	'''
+	Returns the minimum pixel value within a 2-3d image
+	'''
+	return np.amin(img_2d.flatten())
+
+
+def properties(image):
+	'''Prints some of an image's properties into the console directly'''
+	print(">Image Properties")
+	print("Dimensions: {}".format(image.shape))
+	print("Format: {}".format(image.dtype.name))
+	print("Global Max: {}\tGlobal Min: {}".format(global_max(image), global_min(image)))
 
 if __name__ == "__main__":
 	'''Generates a 3d image of binary blobs and then runs the viewer.
